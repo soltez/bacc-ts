@@ -1,0 +1,30 @@
+{
+  "name": "bacc-ts",
+  "version": "1.0.0",
+  "description": "A fast and memory efficient Baccarat engine for calculating results, scoreboards, and related statistics.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soltez/bacc-ts.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/soltez/bacc-ts/issues"
+  },
+  "homepage": "https://github.com/soltez/bacc-ts#readme",
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}
