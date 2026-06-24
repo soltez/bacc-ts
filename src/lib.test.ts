@@ -104,31 +104,30 @@ function round(player: CardInt[], banker: CardInt[]): BaccaratRound {
 }
 
 describe('BaccaratRound.encode', () => {
-    it.each([
-        // player wins (9 vs 0), no pairs, no thirds
-        [[Card9s, CardKh], [CardKs, CardTh], 0x0901],
-        // banker wins (0 vs 9), no pairs, no thirds
-        [[CardKs, CardTh], [Card9s, CardKh], 0x9002],
-        // tie (5 vs 5), no pairs, no thirds
-        [[Card5s, CardKh], [Card5h, CardQd], 0x5503],
-        // player pair: bit 2 set, player wins (2 vs 0)
-        [[CardAs, CardAh], [CardKs, CardTh], 0x0205],
-        // banker pair: bit 3 set, banker wins (0 vs 2)
-        [[CardKs, CardTh], [CardAs, CardAh], 0x200a],
-        // player has third: bit 4 set, player wins (6 vs 5)
-        [[Card6s, CardKh, CardTs], [Card5s, CardQd], 0x5611],
-        // banker has third: bit 5 set, banker wins (5 vs 6)
-        [[Card5s, CardQd], [Card6s, CardKh, CardTs], 0x6522],
-        // both thirds: bits 4+5 set, player wins (9 vs 2)
-        [[Card2h, Card3d, Card4c], [Card3h, Card4d, Card5c], 0x2931],
-        // both pairs: bits 2+3 set, player wins (2 vs 0)
-        [[CardAs, CardAh], [CardKs, CardKh], 0x020d],
-    ] as [CardInt[], CardInt[], number][])(
-        'round(%j, %j).encode() === 0x%s',
-        (player, banker, expected) => {
-            expect(round(player, banker).encode()).toBe(expected)
-        }
-    )
+    // Golden values verified against bacc-core-rs BaccRound::encode() tests.
+    it('player wins no pairs no thirds: Card8c+CardAh vs Card2d+Card3s', () => {
+        // p=[8c(0x86),Ah(0x2c)] b=[2d(0x40),3s(0x11)] no aux
+        expect(new BaccaratRound(hand([Card8c, CardAh]), hand([Card2d, Card3s]), false, null).encode())
+            .toBe('00000000112c4086')
+    })
+
+    it('banker wins both thirds forced: CardAc+Card2h+Card3d vs Card5s+Card6c+Card7h', () => {
+        // p=[Ac(0x8c),2h(0x21),3d(0x41)] b=[5s(0x13),6c(0x84),7h(0x25)] forcedThird auxNib=0x08
+        expect(new BaccaratRound(hand([CardAc, Card2h, Card3d]), hand([Card5s, Card6c, Card7h]), true, null).encode())
+            .toBe('000825418420138c')
+    })
+
+    it('tie both pairs: Card3c+Card3h vs Card8d+Card8s', () => {
+        // p=[3c(0x81),3h(0x21)] b=[8d(0x46),8s(0x16)] no aux
+        expect(new BaccaratRound(hand([Card3c, Card3h]), hand([Card8d, Card8s]), false, null).encode())
+            .toBe('0000000016214681')
+    })
+
+    it('cut card index Some(3) encoded as 4 in auxNib', () => {
+        // p=[3c(0x81),4h(0x22)] b=[6d(0x44),As(0x1c)] cutCardIndex=3 -> auxNib=4
+        expect(new BaccaratRound(hand([Card3c, Card4h]), hand([Card6d, CardAs]), false, 3).encode())
+            .toBe('000400001c224481')
+    })
 })
 
 // -------------------------------------------------------------------
@@ -719,8 +718,7 @@ describe('BaccaratScoreboard 12-round integration', () => {
         for (let i = 0; i < 2; i++) {
             sb.update(shoe.next()!)
         }
-        expect(sb.beadPlate()).toBe(BigInt('0x09030612'))
-        expect(sb.bigRoad()).toBe(BigInt('0x161201'))
+        expect(sb.encode()).toBe('09030612')
 
         for (let i = 0; i < 8; i++) {
             sb.update(shoe.next()!)
@@ -735,24 +733,9 @@ describe('BaccaratScoreboard 12-round integration', () => {
         expect(r12.cutCardIndex()).toBeNull()
         expect(shoe.next()).toBeNull()
 
-        expect(sb.beadPlate()).toBe(
-            BigInt('0x090306120902090307030801062109010802090107120731'),
-        )
-        expect(sb.bigRoad()).toBe(
-            BigInt('0x161229020208010621090103080201090101071201073101'),
-        )
-
-        const [d0, d1, d2] = sb.derivedRoads()
-        expect(d0).toBe(BigInt('0x030605'))
-        expect(d1).toBe(BigInt('0x0403'))
-        expect(d2).toBe(BigInt('0x04'))
+        expect(sb.encode()).toBe('090306120902090307030801062109010802090107120731')
 
         sb.clear()
-        expect(sb.beadPlate()).toBe(0n)
-        expect(sb.bigRoad()).toBe(0n)
-        const [c0, c1, c2] = sb.derivedRoads()
-        expect(c0).toBe(0n)
-        expect(c1).toBe(0n)
-        expect(c2).toBe(0n)
+        expect(sb.encode()).toBe('')
     })
 })

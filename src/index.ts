@@ -1,7 +1,7 @@
-import { type CardInt, rankOf } from './kev.js'
+import { type CardInt, rankOf, cardToU8 } from './kev.js'
 import { type Card, Shoe } from './shoe.js'
 
-export { type CardInt, makeCard, rankOf, suitOf, DECK } from './kev.js'
+export { type CardInt, makeCard, rankOf, suitOf, cardToU8, DECK } from './kev.js'
 export * from './kev.js'
 export { type Card, Shoe } from './shoe.js'
 
@@ -66,29 +66,33 @@ export class BaccaratRound {
         this._cutCardIndex = cutCardIndex
     }
 
-    // Encodes the outcome and key facts of this round into a single u32.
+    // Encodes the full card sequence and metadata of this round as a 16-char hex string (u64).
     //
-    // Bit layout:
-    //   bits 0-1:   outcome (1=player, 2=banker, 3=tie)
-    //   bit  2:     player pair
-    //   bit  3:     banker pair
-    //   bit  4:     player drew third card
-    //   bit  5:     banker drew third card
-    //   bits 8-11:  player hand value (0-9)
-    //   bits 12-15: banker hand value (0-9)
-    encode(): number {
-        const pv = this.player.value()
-        const bv = this.banker.value()
-        let bits = 3
-        if (pv > bv) bits &= 1
-        else if (pv < bv) bits &= 2
-        bits |= (this.player.isPair() ? 1 : 0) << 2
-        bits |= (this.banker.isPair() ? 1 : 0) << 3
-        bits |= (this.player.hasThird() ? 1 : 0) << 4
-        bits |= (this.banker.hasThird() ? 1 : 0) << 5
-        bits |= pv << 8
-        bits |= bv << 12
-        return bits
+    // Bit layout (big-endian u64):
+    //   bits 55-48: auxNib = (forcedThird << 3) | cut_card_index_1indexed
+    //   bits 47-40: banker card 3 (cdhsrrrr), or 0 if not drawn
+    //   bits 39-32: player card 3 (cdhsrrrr), or 0 if not drawn
+    //   bits 31-24: banker card 2 (cdhsrrrr)
+    //   bits 23-16: player card 2 (cdhsrrrr)
+    //   bits 15-8:  banker card 1 (cdhsrrrr)
+    //   bits  7-0:  player card 1 (cdhsrrrr)
+    //
+    // Each cdhsrrrr byte: bits 7-4 = suit nibble, bits 3-0 = rank index.
+    encode(): string {
+        const cut = this._cutCardIndex === null ? 0 : this._cutCardIndex + 1
+        const auxNib = ((this._isForcedThird ? 1 : 0) << 3) | cut
+        const pc = this.player.cards()
+        const bc = this.banker.cards()
+        const p2 = pc.length > 2 ? cardToU8(pc[2]!) : 0
+        const b2 = bc.length > 2 ? cardToU8(bc[2]!) : 0
+        const n = BigInt(auxNib) << 48n
+            | BigInt(b2) << 40n
+            | BigInt(p2) << 32n
+            | BigInt(cardToU8(bc[1]!)) << 24n
+            | BigInt(cardToU8(pc[1]!)) << 16n
+            | BigInt(cardToU8(bc[0]!)) << 8n
+            | BigInt(cardToU8(pc[0]!))
+        return n.toString(16).padStart(16, '0')
     }
 
     playerCards(): readonly CardInt[] {
@@ -280,7 +284,7 @@ export class BaccaratScoreboard {
 
     // Updates all five scoreboards immediately after a completed round.
     update(round: BaccaratRound): void {
-        const bead = BaccaratScoreboard.beadWord(round.encode())
+        const bead = BaccaratScoreboard.beadWord(round)
         const isTie = (bead & 0x3) === 0x3
         this.updateBeadPlate(bead)
         this.updateBigRoad(bead, isTie)
@@ -295,36 +299,32 @@ export class BaccaratScoreboard {
         this.derivedRoadBytes = [[], [], []]
     }
 
-    // Returns the bead plate as a bigint (big-endian encoding, oldest bead at MSB).
-    beadPlate(): bigint {
-        return bytesToBigInt(this.beadPlateBytes)
+    // Returns the bead plate as a lowercase hex string (oldest bead at MSB).
+    // Matches BaccScoreboard::encode() in bacc-core-rs.
+    encode(): string {
+        return this.beadPlateBytes.map(b => b.toString(16).padStart(2, '0')).join('')
     }
 
-    // Returns the big road as a bigint (big-endian encoding, oldest column at MSB).
-    bigRoad(): bigint {
-        return bytesToBigInt(this.bigRoadBytes)
-    }
-
-    // Returns [BigEyeBoy, SmallRoad, CockroachPig] as bigints.
-    derivedRoads(): [bigint, bigint, bigint] {
-        return [
-            bytesToBigInt(this.derivedRoadBytes[0]),
-            bytesToBigInt(this.derivedRoadBytes[1]),
-            bytesToBigInt(this.derivedRoadBytes[2]),
-        ]
-    }
-
-    // Converts a round's packed encode() value into a 16-bit bead word.
+    // Computes the 16-bit bead word from a round's outcome.
     //
     // Result bit layout:
     //   bits 11-8: winner's hand value (banker value if banker wins, else player)
     //   bits  5-4: third card flags
     //   bits  3-2: pair flags
     //   bits  1-0: outcome (1=player, 2=banker, 3=tie)
-    private static beadWord(packed: number): number {
-        const lowByte = packed & 0xff
-        const val = (packed & 0x3) === 2 ? packed >>> 4 : packed
-        return lowByte | (val & 0xf00)
+    private static beadWord(round: BaccaratRound): number {
+        const pc = round.playerCards()
+        const bc = round.bankerCards()
+        const pv = pc.reduce((s, c) => s + pipValue(c), 0) % 10
+        const bv = bc.reduce((s, c) => s + pipValue(c), 0) % 10
+        const marker = pv > bv ? 1 : pv < bv ? 2 : 3
+        const playerPair = rankOf(pc[0]!) === rankOf(pc[1]!) ? 1 : 0
+        const bankerPair = rankOf(bc[0]!) === rankOf(bc[1]!) ? 1 : 0
+        const playerThird = pc.length === 3 ? 1 : 0
+        const bankerThird = bc.length === 3 ? 1 : 0
+        const handVal = marker === 2 ? bv : pv
+        const lowByte = marker | (playerPair << 2) | (bankerPair << 3) | (playerThird << 4) | (bankerThird << 5)
+        return (handVal << 8) | lowByte
     }
 
     private updateBeadPlate(bead: number): void {
@@ -416,12 +416,3 @@ export class BaccaratScoreboard {
     }
 }
 
-// Interprets a byte array as a big-endian unsigned integer (bigint).
-// Equivalent to Rust's BigUint::from_bytes_be.
-function bytesToBigInt(bytes: number[]): bigint {
-    let result = 0n
-    for (const b of bytes) {
-        result = (result << 8n) | BigInt(b)
-    }
-    return result
-}
