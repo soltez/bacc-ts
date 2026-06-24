@@ -83,6 +83,13 @@ export const CardQc = makeCard(10, 8)
 export const CardKc = makeCard(11, 8)
 export const CardAc = makeCard(12, 8)
 
+// Packs a CardInt into the compact byte used by BaccRound encoding.
+// Format: bits 7-4 = suit nibble (1=spade,2=heart,4=diamond,8=club), bits 3-0 = rank index.
+// Bits 15-8 of the Cactus Kev integer are already this layout, so mask then shift.
+export function cardToU8(card: CardInt): number {
+    return (card & 0xFF00) >>> 8
+}
+
 // Standard 52-card deck in suit order: spades, hearts, diamonds, clubs.
 // Within each suit: A K Q J T 9 8 7 6 5 4 3 2 (rank 12 down to 0).
 export const DECK: CardInt[] = [
