@@ -9,12 +9,12 @@ and related statistics. TypeScript port of
 - Cactus Kev 32-bit card integer encoding for compact, fast card representation
 - Multi-deck shoe with configurable penetration, shuffle passes, and burn ritual
 - Full baccarat third-card rules (natural, player draw, banker draw table)
-- Round encoding: outcome, pair flags, third-card flags, and hand values packed
-  into a single integer
-- Five standard scoreboards: bead plate, big road, Big Eye Boy, Small Road,
-  Cockroach Pig
-- All scoreboards returned as `bigint` (big-endian byte stream) for compact
-  serialization
+- Round encoding: full card sequence and metadata packed into a 16-char hex string
+  compatible with `BaccRound::encode()` in bacc-core-rs
+- Scoreboard encoding: bead plate returned as a hex string compatible with
+  `BaccScoreboard::encode()` in bacc-core-rs
+- Five standard scoreboards tracked internally: bead plate, big road, Big Eye Boy,
+  Small Road, Cockroach Pig
 - `BaccaratShoe` implements the `Iterable` protocol -- use a `for...of` loop
   or call `next()` manually
 - Deterministic shoe construction via `fromCards()` for testing and simulation
@@ -44,33 +44,26 @@ for (const round of shoe) {
     scoreboard.update(round)
 }
 
-console.log(scoreboard.beadPlate().toString(16))
-console.log(scoreboard.bigRoad().toString(16))
-
-const [bigEyeBoy, smallRoad, cockroachPig] = scoreboard.derivedRoads()
+// hex string compatible with BaccScoreboard::encode() in bacc-core-rs
+console.log(scoreboard.encode())
 ```
 
 ### Inspect individual rounds
 
 ```ts
-const shoe = BaccaratShoe.new(6, 3, 0.8)
+const shoe = BaccaratShoe.new(6, 3, 0.965)
 
 let round = shoe.next()
 while (round !== null) {
-    const encoded = round.encode()
-    const outcome = encoded & 0x3           // 1=player, 2=banker, 3=tie
-    const playerPair = (encoded >>> 2) & 1
-    const bankerPair = (encoded >>> 3) & 1
-    const playerValue = (encoded >>> 8) & 0xf
-    const bankerValue = (encoded >>> 12) & 0xf
-
-    console.log({ outcome, playerPair, bankerPair, playerValue, bankerValue })
+    // 16-char hex string (u64) compatible with BaccRound::encode() in bacc-core-rs
+    console.log('encoded:', round.encode())
     console.log('player cards:', round.playerCards())
     console.log('banker cards:', round.bankerCards())
+    console.log('forced third:', round.isForcedThird())
 
     // null if cut card not seen this round; index 0-5 if seen
     if (round.cutCardIndex() !== null) {
-        console.log('cut card encountered at position', round.cutCardIndex())
+        console.log('cut card at position', round.cutCardIndex())
     }
 
     round = shoe.next()
@@ -101,7 +94,7 @@ import { Shoe, DECK, CardAs } from 'bacc-ts'
 
 const shoe = Shoe.new(6)
 shoe.shuffle(5)
-shoe.cut(0.8)
+shoe.cut(0.965)
 
 console.log('stub size:', shoe.stubSize())
 
@@ -115,28 +108,34 @@ while (card !== undefined) {
 
 ## Round encoding
 
-`BaccaratRound.encode()` packs the round result into a single 32-bit integer:
+`BaccaratRound.encode()` returns a 16-char lowercase hex string (big-endian u64)
+encoding the full card sequence and metadata. Compatible with `BaccRound::encode()`
+in bacc-core-rs.
 
-| Bits  | Field               | Values                        |
-|-------|---------------------|-------------------------------|
-| 1-0   | Outcome             | 1=player, 2=banker, 3=tie     |
-| 2     | Player pair         | 1=yes, 0=no                   |
-| 3     | Banker pair         | 1=yes, 0=no                   |
-| 4     | Player drew third   | 1=yes, 0=no                   |
-| 5     | Banker drew third   | 1=yes, 0=no                   |
-| 11-8  | Player hand value   | 0-9                           |
-| 15-12 | Banker hand value   | 0-9                           |
+| Bits  | Field          | Notes                                                         |
+|-------|----------------|---------------------------------------------------------------|
+| 55-48 | Aux nibble     | bit 3 = forced third, bits 2-0 = cut card index (1-indexed)  |
+| 47-40 | Banker card 3  | `cdhsrrrr`, or `00` if not drawn                             |
+| 39-32 | Player card 3  | `cdhsrrrr`, or `00` if not drawn                             |
+| 31-24 | Banker card 2  | `cdhsrrrr`                                                    |
+| 23-16 | Player card 2  | `cdhsrrrr`                                                    |
+| 15-8  | Banker card 1  | `cdhsrrrr`                                                    |
+|  7-0  | Player card 1  | `cdhsrrrr`                                                    |
+
+Each `cdhsrrrr` byte is bits 15-8 of the Cactus Kev integer -- `cdhs` = one-hot suit
+nibble (c=clubs, d=diamonds, h=hearts, s=spades), `rrrr` = rank index (0=deuce ... 12=ace).
+Absent card slots are `00`.
 
 ## Scoreboard encoding
 
-All scoreboards are returned as `bigint` values where the oldest entry sits at
-the most significant byte. Pass them directly to a WASM layer or serialize with
-`.toString(16)`.
+`BaccaratScoreboard.encode()` returns a lowercase hex string of bead words in
+chronological order (oldest at MSB). Compatible with `BaccScoreboard::encode()`
+in bacc-core-rs.
 
-- **Bead plate** -- 2 bytes per round in chronological order.
-- **Big road** -- variable-width columns; each column is `2*rowCount+1` bytes.
-- **Derived roads** (Big Eye Boy, Small Road, Cockroach Pig) -- run-length
-  encoded; each byte is `(runLength << 1) | icon` where icon 1=red, 0=blue.
+- **Bead plate** -- 2 bytes per round; bits 15-8 = winner hand value, bits 5-4 = third
+  flags, bits 3-2 = pair flags, bits 1-0 = outcome (1=player, 2=banker, 3=tie).
+- **Big road**, **derived roads** (Big Eye Boy, Small Road, Cockroach Pig) -- tracked
+  internally; use bacc-core-rs `BaccScoreboard::decode()` to reconstruct and simulate.
 
 ## License
 
